@@ -15,15 +15,12 @@ def main():
 def start_server(ip, port):
     s = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
     s.bind((ip, port))
-    s.listen(1) # only listen to 1 connection at a time
-
+    message, addr_client = s.recvfrom(2048)
 
     # ต้องเป็น ip ที่ server รอฟัง ไม่ใช่ว่ารอฟังจาก ip ไหน
     while True:
-        c, addr = s.accept()
-        print("Got connection from", addr)
-        c.send("Hello from server".encode())
-        c.close()
+        print("Got connection from", addr_client)
+        s.sendto("Hello from server".encode('utf-8') , addr_client)
         break
 
 

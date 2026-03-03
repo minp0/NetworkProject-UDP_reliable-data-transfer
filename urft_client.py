@@ -15,10 +15,10 @@ def main():
 
 def start_client(path, ip, port):
     s = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
-    s.connect((ip, port))
-    
-    print (s.recv(1024).decode())
+    s.sendto(path.encode('utf-8'),(ip, port))
+    message, addr_serv= s.recvfrom(2048)
+    print(message.decode())
     s.close()     
 
 # main()
-start_client("","localhost", 12345)
+start_client("something","localhost", 12345)
