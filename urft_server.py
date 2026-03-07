@@ -9,8 +9,8 @@ def main():
             print("Error, input not valid -> python urft_server.py <server_ip> <server_port> ")
         else:
             # init value
-            server_ip = sys.argv[2]
-            server_port = sys.argv[3]
+            server_ip = sys.argv[1]
+            server_port = int(sys.argv[2])
             # print(f"{server_ip}, {server_port}")
             start_server(server_ip, server_port)
 
@@ -37,3 +37,4 @@ def start_server(ip, port):
 
 # main()
 start_server("loopback", 10000)
+# start_server("192.168.10.116", 10000)   

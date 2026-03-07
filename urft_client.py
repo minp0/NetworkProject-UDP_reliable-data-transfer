@@ -10,8 +10,8 @@ def main():
             print("Error, input not valid -> python urft_client.py <file_path> <server_ip> <server_port> ")
         else:
             # init value
-            file_path = sys.argv[1]
-            server_ip = sys.argv[2]
+            file_path = int(sys.argv[1])
+            server_ip = int(sys.argv[2])
             server_port = sys.argv[3]
             print(f"{file_path}, {server_ip}, {server_port}")
             start_client(file_path, server_ip, server_port)
