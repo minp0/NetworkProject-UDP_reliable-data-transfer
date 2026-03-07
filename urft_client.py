@@ -48,6 +48,6 @@ def start_client(path, ip, port):
 
 
 
-# main()
-start_client("something","loopback", 10000)
+main()
+# start_client("something","loopback", 10000)
 # start_client("something","25.12.207.234", 10000)

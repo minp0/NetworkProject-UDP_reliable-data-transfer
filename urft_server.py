@@ -31,5 +31,5 @@ def start_server(ip, port):
         
 
 
-# main()
-start_server("loopback", 10000)
+main()
+# start_server("loopback", 10000)
