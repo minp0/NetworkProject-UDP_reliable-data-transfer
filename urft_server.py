@@ -17,13 +17,18 @@ def main():
 def start_server(ip, port):
     s = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
     s.bind((ip, port))
-    message, addr_client = s.recvfrom(2048)
+
+    print(f"Receiver ready at {ip}:{[port]}...")
 
     # ต้องเป็น ip ที่ server รอฟัง ไม่ใช่ว่ารอฟังจาก ip ไหน
     while True:
-        print("Got connection from", addr_client)
-        s.sendto("Hello from server".encode('utf-8') , addr_client)
-        break
+        message, addr_client = s.recvfrom(2048)
+        print("Got connection from ->", addr_client)
+        
+        # Make new Class เฉยๆ
+        packet = Segment()
+        s.sendto(packet.unpack(message) , addr_client)
+        
 
 
 # main()
