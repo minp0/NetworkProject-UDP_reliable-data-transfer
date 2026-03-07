@@ -41,14 +41,14 @@ class Segment():
         payload = packet[header_size:]
 
         src, dest, flag, seq, ack= struct.unpack(format_segment,header)
-        data = struct.unpack(f"10s",payload)            # มาแก้ size ทีหลัง
+        data = struct.unpack(f"10s",payload)[0]            # มาแก้ size ทีหลัง
 
 
         print(data)
         message = data.decode("utf-8").strip('\x00')
         print(f"Received Packet: Seq={seq}, Flag={flag}, Msg='{message}'")
 
-        return self.send_ACK(seq)
+        return self.pack_ACK(seq)
 
     def pack_ACK(self,seq):
         ack_packet = struct.pack("!I", seq)
