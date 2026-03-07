@@ -12,7 +12,7 @@ def main():
             # init value
             file_path = sys.argv[1]
             server_ip = sys.argv[2]
-            server_port = sys.argv[3]
+            server_port = int(sys.argv[3])
             print(f"{file_path}, {server_ip}, {server_port}")
             start_client(file_path, server_ip, server_port)
 
