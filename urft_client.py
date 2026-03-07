@@ -35,7 +35,7 @@ def start_client(path, ip, port):
         try:
             s.settimeout(0.2)       # 200 millisecond
             ack_data , _  = s.recvfrom(2048)
-            segment.unpack(ack_data) 
+            segment.unpack_ACK(ack_data) 
         except s.timeout:
             print("Timeout! Packet might be lost.")
 
