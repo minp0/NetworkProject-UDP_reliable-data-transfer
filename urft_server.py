@@ -1,6 +1,8 @@
 import sys
 import socket
 
+from realiable import *
+
 def main():
     if __name__ == "__main__": # run when this file is executed -> not a module
         if len(sys.argv) !=3 :
@@ -25,4 +27,4 @@ def start_server(ip, port):
 
 
 # main()
-start_server("localhost", 12345)
+start_server("loopback", 10000)

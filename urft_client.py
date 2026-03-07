@@ -13,6 +13,7 @@ def main():
             print(f"{file_path}, {server_ip}, {server_port}")
             start_client(file_path, server_ip, server_port)
 
+
 def start_client(path, ip, port):
     s = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
     s.sendto(path.encode('utf-8'),(ip, port))
@@ -22,3 +23,4 @@ def start_client(path, ip, port):
 
 # main()
 start_client("something","localhost", 12345)
+# start_client("something","25.12.207.234", 10000)
