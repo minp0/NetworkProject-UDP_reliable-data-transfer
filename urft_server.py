@@ -23,12 +23,15 @@ def start_server(ip, port):
     # ต้องเป็น ip ที่ server รอฟัง ไม่ใช่ว่ารอฟังจาก ip ไหน
     try:
         while True:
+            segment = Realiable()
+            file_name = segment.standby_connection(s)
+
+            with open(file_name, "w") as file:
+                pass
+
             message, addr_client = s.recvfrom(2048)
             print("Got connection from ->", addr_client)
-            
-            # Make new Class เฉยๆ
-            packet = Segment()
-            s.sendto(packet.unpack(message) , addr_client)
+
 
     except KeyboardInterrupt:
         print("Shutting down by keyboard input")
@@ -36,5 +39,10 @@ def start_server(ip, port):
 
 
 # main()
+
+import os
+if os.path.exists("output.txt"):
+    os.remove("output.txt")
+
 start_server("loopback", 10000)
 # start_server("192.168.10.116", 10000)   

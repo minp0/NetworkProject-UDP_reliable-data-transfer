@@ -6,38 +6,30 @@ from realiable import *
 
 def main():
     if __name__ == "__main__": # run when this file is executed -> not a module
-        if len(sys.argv) !=4 :
-            print("Error, input not valid -> python urft_client.py <file_path> <server_ip> <server_port> ")
+        if len(sys.argv) != 4:
+            print("Error, input not valid -> python urft_client.py <file_path> <server_ip> <server_port>")
         else:
             # init value
-            file_path = int(sys.argv[1])
-            server_ip = int(sys.argv[2])
-            server_port = sys.argv[3]
-            print(f"{file_path}, {server_ip}, {server_port}")
+            file_path = sys.argv[1]
+            server_ip = sys.argv[2]
+            server_port = int(sys.argv[3])
+            print(f"Sending file: {file_path} to {server_ip}:{server_port}")
             start_client(file_path, server_ip, server_port)
 
+file_name = "Hello Min"
 
-# Mock data
-messages = ["Hello!", "UDP-RDT", "Testing"]
-
-def start_client(path, ip, port):
+def start_client(file_path, server_ip, server_port):
     s = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
-
-    for i,msg in enumerate(messages):
-        seq_num = i + 1
-        msg_bytes = msg.encode('utf-8')  
+    segment = Realiable()
         
-        segment = Segment()
-        packet = segment.pack(12345,10000,0,seq_num,0,msg_bytes)
-        s.sendto(packet,(ip,port))
+    segment.start_connecting(s,server_ip,server_port,file_name)
 
-        # timer for ack
-        try:
-            s.settimeout(0.2)       # 200 millisecond
-            ack_data , _  = s.recvfrom(2048)
-            segment.unpack_ACK(ack_data) 
-        except s.timeout:
-            print("Timeout! Packet might be lost.")
+    # try:
+    #     s.settimeout(0.2)       # 200 millisecond
+    #     ack_data , _  = s.recvfrom(2048)
+    #     segment.unpack_ACK(ack_data) 
+    # except s.timeout:
+    #     print("Timeout! Packet might be lost.")
 
 
 
