@@ -1,4 +1,5 @@
 import struct
+import socket
 
 # Network sizing: MTU(1500) - IP header(20) - UDP header(8) = 1472 bytes
 BUFFER_SIZE = 1472      # 
@@ -6,7 +7,7 @@ MSS = 1463              # Payload size per packet -> MSS - 9(header)
 window_size = 32768     # 32 KB (recommended for efficiency)
 
 
-socket_timeout = 0.2  # 1 / 1000 * 200 millisecond
+socket_timeout = 2  # 1 / 1000 * 200 millisecond
 
 # !  flag(unsigned char) 1 | seq(unsigned int) 4 | ack | payload
 format_segment = f"!BII"          #  + f"{window_size}s"
@@ -18,7 +19,7 @@ print(f"Header size: {header_size} bytes, MSS: {MSS} bytes, Buffer: {BUFFER_SIZE
 
 class Realiable():
     def __init__(self):
-        pass
+        self.MSS = MSS
 
     # for pack payload
     def pack(self, flag, seq, ack, payload):
@@ -44,6 +45,7 @@ class Realiable():
 
         # need total_length of data for ack
         total_length = len(data)
+        print(data)
         message = data.decode("utf-8").strip('\x00')
         print(f"Received Packet: Seq={seq}, Ack={ack}, Flag={flag}, Msg='{message}'")
 
@@ -72,31 +74,35 @@ class Realiable():
         return ack
 
     
-    def wait_ACK(self, socket, seq, total_length):
+    def wait_ACK(self, sock, seq, total_length):
         try:
-            socket.settimeout(socket_timeout) 
-            ack_packet, _ = socket.recvfrom(BUFFER_SIZE)
-            ack =  self.unpack_ACK(ack_packet)
+            sock.settimeout(socket_timeout)
+            ack_packet, _ = sock.recvfrom(BUFFER_SIZE)
+            ack = self.unpack_ACK(ack_packet)
 
-            expected_ack = seq+total_length
-
-            # ack จะหาย ให้ส่งข้อมูลเริ่มที่ ack นั้นใหม่
-            if(ack==expected_ack):
+            expected_ack = seq + total_length
+            if ack == expected_ack:
                 print(f"ACK received correctly: {ack}")
                 return True
-            else: 
+            else:
                 print(f"ACK mismatch! Expected {expected_ack}, got {ack}")
                 # retransmit() ack นั้น ไม่ใช่ expected_ack
+                return False
         
-        except socket.timeout:
-            print("Timeout! Packet might be lost.")
-            print("Retransmitting...")
-            # retransmitt()
+        # except socket.timeout:
+        #     print("Timeout! Packet might be lost.")
+        #     print("Retransmitting...")
+        #     # retransmitt()
+        #     return False
+        
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+            return False
 
 
 
     # first handshake -> send name of file
-    # flag -> 0 start syn | 1 -> ack | 2 ->  | 4 -> fin
+    # flag -> 0 start syn | 1 -> ack | 2 -> send data  | 4 -> fin
     def start_connecting(self, socket, server_addr, server_port, filename):
         """Client handshake: send filename to server (SYN with payload)"""
         flag = 0  # SYN flag
@@ -110,7 +116,7 @@ class Realiable():
         print(f"Sent SYN with filename '{filename}' to {server_addr}")
         
         # Wait for ACK from server
-        self.wait_ACK(socket, seq, total_length)
+        return self.wait_ACK(socket, seq, total_length)
         
 
 
@@ -122,10 +128,9 @@ class Realiable():
         
         # Unpack SYN packet
         file_name, seq, data_length = self.unpack(packet)
-        file_name = file_name.encode('utf-8')
 
         # Send ACK
         ack_handshake = self.pack_ACK(seq, data_length)
         socket.sendto(ack_handshake, addr_client)
 
-        return file_name
+        return file_name, addr_client
