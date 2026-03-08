@@ -1,6 +1,5 @@
 import sys
 import socket
-import time
 import os
 
 from realiable import *
@@ -23,56 +22,54 @@ def start_client(file_path, server_ip, server_port):
     s = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
     segment = Realiable()
     
-# try:
-    # Step 1: Handshake - send filename
-    # เดี๋ยวต้องมาแก้ ถ้าทำบน linux
-    print(f"\n[HANDSHAKE] Sending filename: {file_name}")
-    segment.start_connecting(s, server_ip, server_port, file_name)
-    
-    # Step 2: Read file and send in chunks
-    if not os.path.exists(file_path):
-        print(f"Error: File '{file_path}' not found")
-        return
-    
-    file_size = os.path.getsize(file_path)
-    print(f"\n[FILE INFO] Size: {file_size} bytes, Chunk size: {MSS} bytes")
-    
-    with open(file_path, "rb") as f:
-        seq = 1464  # Start No.2
-        chunks_sent = 0
+    try:
+        # Step 1: Handshake - send filename
+        # เดี๋ยวต้องมาแก้ ถ้าทำบน linux
+        print(f"\n[HANDSHAKE] Sending filename: {file_name}")
+        data_len = segment.start_connecting(s, server_ip, server_port, file_name)      
+        # Step 2: Read file and send in chunks
+        if not os.path.exists(file_path):
+            print(f"Error: File '{file_path}' not found")
+            return
+        file_size = os.path.getsize(file_path)
+        print(f"\n[FILE INFO] Size: {file_size} bytes, Chunk size: {MSS} bytes")
         
-        while True:
-            chunk = f.read(MSS)
-            if not chunk:               # ถ้าหมดแล้วก็ break ซะ
-                break
+        with open(file_path, "rb") as f:
+            seq = data_len  # Start No.2
+            chunks_sent = 0
             
-            # Send data packet (flag=2)
-            packet, packet_length = segment.pack(2, seq, 0, chunk)
-            s.sendto(packet, (server_ip, server_port))
-            
-            # Wait for ACK
-            if segment.wait_ACK(s, seq, packet_length):
-                chunks_sent += 1
-                progress = (chunks_sent * MSS / file_size) * 100
-                print(f"[PROGRESS] Chunk {chunks_sent} sent (Seq={seq}, {progress:.1f}%)")
-                seq += 1
-            else:
-                # need retransmit here
-                print(f"[ERROR] Failed to receive ACK for seq {seq}")
-                return
-    
-    # Step 3: Send FIN packet
-    print(f"\n[FINISH] Sending FIN packet...")
-    fin_packet, _ = segment.pack(4, seq, 0, b'')
-    s.sendto(fin_packet, (server_ip, server_port))
-    
-    print(f"[SUCCESS] File sent! Total chunks: {chunks_sent}")
-    
-# except Exception as e:
-    print(f"[ERROR] {e}")
-# finally:
-    s.close()
+            while True:
+                chunk = f.read(MSS)
+                if not chunk:               # ถ้าหมดแล้วก็ break ซะ
+                    break
+                
+                # Send data packet (flag=2)
+                packet, data_len = segment.pack(2, seq, 0, chunk)
+                s.sendto(packet, (server_ip, server_port))
+                
+                # Wait for ACK
+                if segment.wait_ACK(s, seq, data_len):
+                    chunks_sent += 1
+                    progress = (chunks_sent * MSS / file_size) * 100
+                    print(f"[PROGRESS] Chunk {chunks_sent} sent (Seq={seq}, {progress:.1f}%)")
+                    seq += data_len
+                else:
+                    # need retransmit here
+                    print(f"[ERROR] Failed to receive ACK for seq {seq}")
+                    return
+        
+        # Step 3: Send FIN packet
+        print(f"\n[FINISH] Sending FIN packet...")
+        fin_packet, _ = segment.pack(4, seq, 0, b'')
+        s.sendto(fin_packet, (server_ip, server_port))
+        
+        print(f"[SUCCESS] File sent! Total chunks: {chunks_sent}")
+        
+    except Exception as e:
+        print(f"[ERROR] {e}")
+    finally:
+        s.close()
 
 
 # Test with test_1MiB.bin
-start_client("test_1MiB.bin", "loopback", 10000)
+start_client("test_5MiB.bin", "loopback", 10000)

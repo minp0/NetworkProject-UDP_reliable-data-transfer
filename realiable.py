@@ -3,84 +3,84 @@ import socket
 
 # Network sizing: MTU(1500) - IP header(20) - UDP header(8) = 1472 bytes
 BUFFER_SIZE = 1472      # 
-MSS = 1463              # Payload size per packet -> MSS - 9(header)
+MSS = 1461              # Payload size per packet -> MSS - 11(header)
 window_size = 32768     # 32 KB (recommended for efficiency)
 
 
-socket_timeout = 2  # 1 / 1000 * 200 millisecond
+socket_timeout = 0.2  # 1 / 1000 * 200 millisecond
 
-# !  flag(unsigned char) 1 | seq(unsigned int) 4 | ack | payload
-format_segment = f"!BII"          #  + f"{window_size}s"
+# !  flag(unsigned char) 1 | seq(unsigned int) 4 | ack | data_len | payload 
+format_segment = f"!BIIH"          #  + f"{window_size}s"
 
-# header_size = struct.calcsize(format_segment)       #    9  bytes
-header_size = 9
+# header_size = struct.calcsize(format_segment)       #    11  bytes
+header_size = 11
 print(f"Header size: {header_size} bytes, MSS: {MSS} bytes, Buffer: {BUFFER_SIZE} bytes")
 
 
+
+# flag -> 0 start seq | 1 -> ack | 2 -> send data  | 4 -> fin
 class Realiable():
     def __init__(self):
         self.MSS = MSS
 
     # for pack payload
-    def pack(self, flag, seq, ack, payload):
-        """Pack packet: flag(1) + seq(4) + ack(4) + payload"""
+    def pack(self, flag, seq, ack, payload:bytes) -> tuple[bytes, int] :
+        """Pack packet: flag(1) + seq(4) + ack(4) + data_len(2) + payload"""
         # Ensure payload is bytes and pad to size
-        if isinstance(payload, str):
-            payload = payload.encode("utf-8")
-        payload = payload.ljust(MSS, b'\x00')
-        total_length = len(payload)
+        data_len = len(payload)
         
-        packet = struct.pack(format_segment + f"{MSS}s", flag, seq, ack, payload)
+        packet = struct.pack(format_segment + f"{data_len}s", flag, seq, ack, data_len, payload)
         print(f"Sending Seq {seq}...")
-        return packet,total_length
+        return packet,data_len
 
 
-    def unpack(self, packet):
+    def unpack(self, packet) -> tuple[bytes, int, int]:
         """Unpack packet: extract flag, seq, ack, payload"""
         header = packet[:header_size]
         payload = packet[header_size:]
 
-        flag, seq, ack = struct.unpack(format_segment, header)
-        data = struct.unpack(f"{MSS}s", payload)[0]
+        flag, seq, ack, data_len = struct.unpack(format_segment, header)
+        data = struct.unpack(f"{data_len}s", payload)[0]
 
         # need total_length of data for ack
-        total_length = len(data)
-        print(data)
-        message = data.decode("utf-8").strip('\x00')
-        print(f"Received Packet: Seq={seq}, Ack={ack}, Flag={flag}, Msg='{message}'")
+        # print(data)
+        # message = data.decode("utf-8").strip('\x00')
+        print(f"Received Packet: Seq={seq}, Ack={ack}, Flag={flag}")
 
-        return message, seq , total_length
+        return data, seq, data_len
     
 
 
 
     # for ACK
-    def pack_ACK(self, seq, data_length):
+    def pack_ACK(self, seq, data_len) -> bytes :
         """pack ACK packet"""
         flag = 1  # ACK flag
-        ack = seq + data_length
-        empty_payload = b'\x00' * MSS
-        ack_packet = struct.pack(format_segment + f"{MSS}s", flag, seq, ack, empty_payload)
+        ack = seq + data_len
+        ack_packet = struct.pack(format_segment, flag, 1, ack, 0)
         
         print(f"Send Ack: {ack}")
         return ack_packet
     
-    def unpack_ACK(self, ack_packet):
+    def unpack_ACK(self, ack_packet) -> any :
         """Unpack ACK packet"""
         header = ack_packet[:header_size]
-        flag, seq, ack = struct.unpack(format_segment, header)
+        flag, _, ack, _= struct.unpack(format_segment, header)
+        if flag != 1:
+            print("This should not happend")
+            return False
+        
         print(f"ACK Received for Seq: {ack}")
-
         return ack
 
     
-    def wait_ACK(self, sock, seq, total_length):
+    def wait_ACK(self, sock, seq, data_len) -> bool:
         try:
             sock.settimeout(socket_timeout)
             ack_packet, _ = sock.recvfrom(BUFFER_SIZE)
             ack = self.unpack_ACK(ack_packet)
 
-            expected_ack = seq + total_length
+            expected_ack = seq + data_len
             if ack == expected_ack:
                 print(f"ACK received correctly: {ack}")
                 return True
@@ -102,21 +102,24 @@ class Realiable():
 
 
     # first handshake -> send name of file
-    # flag -> 0 start syn | 1 -> ack | 2 -> send data  | 4 -> fin
-    def start_connecting(self, socket, server_addr, server_port, filename):
+
+    def start_connecting(self, socket, server_addr, server_port, filename) -> bool:
         """Client handshake: send filename to server (SYN with payload)"""
         flag = 0  # SYN flag
         seq = 1  # initial sequence
         ack = 0
-        payload = filename  # Will be padded in pack()
+        payload = filename.encode("utf-8")  # Will be padded in pack()
         
-        packet,total_length = self.pack(flag, seq, ack, payload)
+        packet, data_len = self.pack(flag, seq, ack, payload)
         socket.sendto(packet, (server_addr,server_port))
         
         print(f"Sent SYN with filename '{filename}' to {server_addr}")
         
         # Wait for ACK from server
-        return self.wait_ACK(socket, seq, total_length)
+        if  self.wait_ACK(socket, seq, data_len):
+            pass
+            #retrans
+        return data_len
         
 
 
@@ -127,10 +130,11 @@ class Realiable():
         print("Got connection from ->", addr_client)
         
         # Unpack SYN packet
-        file_name, seq, data_length = self.unpack(packet)
+        file_name, seq, data_len = self.unpack(packet)
+        file_name = file_name.decode("utf-8")
 
         # Send ACK
-        ack_handshake = self.pack_ACK(seq, data_length)
+        ack_handshake = self.pack_ACK(seq, data_len)
         socket.sendto(ack_handshake, addr_client)
 
         return file_name, addr_client
