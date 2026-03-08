@@ -22,6 +22,7 @@ def start_client(file_path, server_ip, server_port):
     s = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
     segment = Realiable()
         
+    # เอา file name แบบนี้ไปก่อน
     segment.start_connecting(s,server_ip,server_port,file_name)
 
     # try:

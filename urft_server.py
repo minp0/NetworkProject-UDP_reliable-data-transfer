@@ -40,9 +40,9 @@ def start_server(ip, port):
 
 # main()
 
-import os
-if os.path.exists("output.txt"):
-    os.remove("output.txt")
+# import os
+# if os.path.exists("output.txt"):
+#     os.remove("output.txt")
 
 start_server("loopback", 10000)
 # start_server("192.168.10.116", 10000)   
