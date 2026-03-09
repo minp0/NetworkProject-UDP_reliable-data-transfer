@@ -26,7 +26,11 @@ def start_client(file_path, server_ip, server_port):
         # Step 1: Handshake - send filename
         # เดี๋ยวต้องมาแก้ ถ้าทำบน linux
         print(f"\n[HANDSHAKE] Sending filename: {file_name}")
-        data_len = segment.start_connecting(s, server_ip, server_port, file_name)      
+        hs_seq, hs_len = segment.start_connecting(s, server_ip, server_port, file_name)
+        # ตรวจสอบผลการ handshake
+        if hs_seq == 0:
+            print("[ERROR] Handshake failed")
+            return
         # Step 2: Read file and send in chunks
         if not os.path.exists(file_path):
             print(f"Error: File '{file_path}' not found")
@@ -35,7 +39,9 @@ def start_client(file_path, server_ip, server_port):
         print(f"\n[FILE INFO] Size: {file_size} bytes, Chunk size: {MSS} bytes")
         
         with open(file_path, "rb") as f:
-            seq = data_len  # Start No.2
+            # คำนวณ seq ให้เริ่มจากการที่ handshake จบแล้ว
+            # seq ของแพ็กเก็ตข้อมูลจะต้องเป็น seq_handshake + len_handshake คือค่าตัวเลขลำดับต่องาน
+            seq = hs_seq + hs_len  # Start No.2
             chunks_sent = 0
             
             while True:
@@ -54,9 +60,16 @@ def start_client(file_path, server_ip, server_port):
                     print(f"[PROGRESS] Chunk {chunks_sent} sent (Seq={seq}, {progress:.1f}%)")
                     seq += data_len
                 else:
-                    # need retransmit here
-                    print(f"[ERROR] Failed to receive ACK for seq {seq}")
-                    return
+                    # attempt retransmit
+                    print(f"[WARN] No ACK for seq {seq}, attempting retransmit")
+                    if segment.retransmit(s, packet, seq, data_len, (server_ip, server_port)):
+                        chunks_sent += 1
+                        progress = (chunks_sent * MSS / file_size) * 100
+                        print(f"[PROGRESS] Chunk {chunks_sent} sent after retransmit (Seq={seq}, {progress:.1f}%)")
+                        seq += data_len
+                    else:
+                        print(f"[ERROR] Failed to receive ACK after retransmit for seq {seq}")
+                        return
         
         # Step 3: Send FIN packet
         print(f"\n[FINISH] Sending FIN packet...")

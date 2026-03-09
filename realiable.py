@@ -75,36 +75,95 @@ class Realiable():
 
     
     def wait_ACK(self, sock, seq, data_len) -> bool:
+        """
+        รอ ACK จาก server โดยรับ cumulative ACK (ack >= expected_ack)
+        เหตุผล: ACK packet อาจมาถึง out-of-order ถ้า ack เก่ามาหลัง ack ใหม่กว่า
+        ให้ discard ack เก่า และอ่านต่อจนกว่าจะได้ ack >= expected_ack
+        """
         try:
             sock.settimeout(socket_timeout)
-            ack_packet, _ = sock.recvfrom(BUFFER_SIZE)
-            ack = self.unpack_ACK(ack_packet)
-
             expected_ack = seq + data_len
-            if ack == expected_ack:
-                print(f"ACK received correctly: {ack}")
-                return True
-            else:
-                print(f"ACK mismatch! Expected {expected_ack}, got {ack}")
-                # retransmit() ack นั้น ไม่ใช่ expected_ack
-                return False
+            
+            while True:
+                ack_packet, _ = sock.recvfrom(BUFFER_SIZE)
+                ack = self.unpack_ACK(ack_packet)
+
+                if ack >= expected_ack:
+                    # ได้ ACK ที่ >= expected หรือ cumulative ACK
+                    print(f"ACK received correctly: {ack}")
+                    return True
+                else:
+                    # ack < expected_ack = ACK เก่าจาก packet ก่อนหน้า ให้ discard แล้วอ่านต่อ
+                    print(f"[OLD ACK] Received old ACK {ack}, expected >= {expected_ack}, discarding...")
+                    continue
         
-        # except socket.timeout:
-        #     print("Timeout! Packet might be lost.")
-        #     print("Retransmitting...")
-        #     # retransmitt()
-        #     return False
+        except socket.timeout:
+            print("Timeout! Packet might be lost.")
+            return False
         
         except Exception as e:
             print(f"An unexpected error occurred: {e}")
             return False
 
 
+    # def retransmit():
+        # pass
+
+    # เพิ่มฟังก์ชัน `retransmit`: ถ้า ACK หาย ฝั่ง client จะส่ง packet ซ้ำ (retransmit)
+    # ฟังก์ชันนี้พยายามส่งซ้ำจนกว่าได้รับ ACK ที่คาดหวังหรือครบจำนวน retries
+    def retransmit(self, sock, packet: bytes, seq: int, data_len: int, addr, max_retries: int = 10) -> bool:
+        """Retransmit `packet` to `addr` until expected ACK received or retries exhausted.
+
+        Returns True if ACK received, False otherwise.
+        
+        เมื่อ ACK ไม่มาทันเวลา (timeout) หรือได้ ACK ที่ผิด ต้องส่งแพ็กเก็ตนั้นอีกครั้ง
+        รับ cumulative ACK (ack >= expected) เพราะ ACK อาจมาถึง out-of-order
+        ลองส่งซ้ำได้สูงสุด max_retries ครั้ง ถ้าไม่สำเร็จจะคืนค่า False
+        """
+        attempts = 0
+        expected_ack = seq + data_len
+        while attempts < max_retries:
+            try:
+                sock.sendto(packet, addr)
+                print(f"Retransmit attempt {attempts+1} for Seq {seq}")
+
+                sock.settimeout(socket_timeout)
+                
+                # อ่าน ACK ซ้ำๆ จนกว่าได้ ACK >= expected (cumulative ACK)
+                while True:
+                    ack_packet, _ = sock.recvfrom(BUFFER_SIZE)
+                    ack = self.unpack_ACK(ack_packet)
+
+                    if ack >= expected_ack:
+                        # ได้ ACK ที่ >= expected
+                        print(f"ACK received on retransmit: {ack}")
+                        return True
+                    else:
+                        # ack < expected = ACK เก่า ให้ discard แล้วอ่านต่อ
+                        print(f"[OLD ACK] Old ACK {ack}, expected >= {expected_ack}, retrying...")
+                        continue
+
+            except socket.timeout:
+                print(f"Retransmit timeout attempt {attempts+1} for Seq {seq}")
+            except Exception as e:
+                print(f"Retransmit error: {e}")
+
+            attempts += 1
+
+        print(f"Retransmit failed after {max_retries} attempts for Seq {seq}")
+        return False
+
+
+
 
     # first handshake -> send name of file
 
-    def start_connecting(self, socket, server_addr, server_port, filename) -> bool:
-        """Client handshake: send filename to server (SYN with payload)"""
+    def start_connecting(self, socket, server_addr, server_port, filename) -> tuple:
+        """Client handshake: send filename to server (SYN with payload)
+        
+        Return (seq, data_len) so client can calculate correct seq for next packets
+        ส่งกลับ (seq, data_len) ของ handshake เพื่อให้ client นำไปคำนวณ seq สำหรับแพ็กเก็ต data
+        """
         flag = 0  # SYN flag
         seq = 1  # initial sequence
         ack = 0
@@ -116,10 +175,13 @@ class Realiable():
         print(f"Sent SYN with filename '{filename}' to {server_addr}")
         
         # Wait for ACK from server
-        if  self.wait_ACK(socket, seq, data_len):
-            pass
-            #retrans
-        return data_len
+        if not self.wait_ACK(socket, seq, data_len):
+            # ถ้า ACK ไม่มาหรือเกิด timeout ให้ส่งแพ็กเก็ต handshake ซ้ำ
+            if not self.retransmit(socket, packet, seq, data_len, (server_addr, server_port)):
+                print("[ERROR] Handshake failed after retransmit attempts")
+                return 0, 0
+
+        return seq, data_len
         
 
 
@@ -137,4 +199,6 @@ class Realiable():
         ack_handshake = self.pack_ACK(seq, data_len)
         socket.sendto(ack_handshake, addr_client)
 
-        return file_name, addr_client
+        # คืน seq และ data_len ด้วย เพื่อให้ server รู้ว่า seq ต่อไปควรจะเป็นเท่าไหร่
+        # server จะใช้ seq + data_len มาเป็น expected_seq สำหรับรับแพ็กเก็ตข้อมูลต่อไป
+        return file_name, addr_client, seq, data_len
