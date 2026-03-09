@@ -10,7 +10,7 @@ window_size = 32768     # 32 KB (recommended for efficiency)
 socket_timeout = 0.2  # 1 / 1000 * 200 millisecond
 
 # !  flag(unsigned char) 1 | seq(unsigned int) 4 | ack | data_len | payload 
-format_segment = f"!BIIH"          #  + f"{window_size}s"
+format_segment = f"!BIIH"          #  + f"{MSS}s"
 
 # header_size = struct.calcsize(format_segment)       #    11  bytes
 header_size = 11

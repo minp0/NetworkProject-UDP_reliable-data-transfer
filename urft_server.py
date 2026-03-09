@@ -42,7 +42,7 @@ def start_server(ip, port):
             bytes_received = 0
             last_ack_packet = None  # Track last ACK sent for retransmit on timeout
             timeout_counter = 0  # Count consecutive timeouts
-            max_timeout_retries = 5  # Max retransmit attempts on timeout
+            max_timeout_retries = 10  # Max retransmit attempts on timeout
             
             while True:
                 try:
