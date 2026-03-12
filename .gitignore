@@ -1,0 +1,11 @@
+# Ignore all files
+*
+
+# Except all .md files
+!*.md
+
+# Except all .py files
+!*.py
+
+# Re-include directories so Git can search them for .md and .py files
+!*/
