@@ -22,7 +22,7 @@ def start_client(file_path, server_ip, server_port):
     s = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
     segment = Realiable()
     
-    file_name = file_path
+    file_name = os.path.basename(file_path) 
     try:
         # Step 1: Handshake - send filename
         # เดี๋ยวต้องมาแก้ ถ้าทำบน linux

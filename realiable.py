@@ -7,7 +7,7 @@ MSS = 1461              # Payload size per packet -> MSS - 11(header)
 window_size = 32768     # 32 KB (recommended for efficiency)
 
 
-socket_timeout = 0.2  # 1 / 1000 * 200 millisecond
+socket_timeout = 0.55  # 1 / 1000 * 200 millisecond
 
 # !  flag(unsigned char) 1 | seq(unsigned int) 4 | ack | data_len | payload 
 format_segment = f"!BIIH"          #  + f"{MSS}s"
