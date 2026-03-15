@@ -5,7 +5,7 @@ import time
 # Network sizing: MTU(1500) - IP header(20) - UDP header(8) = 1472 bytes
 BUFFER_SIZE = 1472
 MSS = 1461              # Payload size per packet -> MSS - 11(header)
-WINDOW_SIZE = 20        # Increased from 10 to 20 for better throughput with Selective Repeat
+WINDOW_SIZE = 64       # Selective Repeat
 
 socket_timeout = 0.55   # 0.55 seconds
 
@@ -16,7 +16,7 @@ format_segment = f"!BIIH"          #  + f"{MSS}s"
 header_size = 11
 print(f"Header size: {header_size} bytes, MSS: {MSS} bytes, Buffer: {BUFFER_SIZE} bytes")
 
-
+    
 
 # flag -> 0 start seq | 1 -> ack | 2 -> send data  | 4 -> fin
 class Realiable():
@@ -428,6 +428,26 @@ class Realiable():
             if not transfer_complete:
                 print(f"[ERROR] Transfer incomplete. Expected next seq {current_expected}, FIN seq {fin_seq}")
                 return None, len(delivered_buffer), False
+
+            # Grace window: keep socket alive briefly to ACK duplicate FIN packets
+            # in case the first FIN-ACK is lost on the way to client.
+            if fin_seq is not None and addr_client is not None:
+                grace_deadline = time.monotonic() + (socket_timeout * 2)
+                original_timeout = sock.gettimeout()
+                sock.settimeout(0.1)
+                try:
+                    while time.monotonic() < grace_deadline:
+                        try:
+                            packet, late_addr = sock.recvfrom(BUFFER_SIZE)
+                            _, seq, _, flag = self.unpack(packet)
+                            if flag == 4 and seq == fin_seq:
+                                ack_pkt = self.pack_ACK(fin_seq)
+                                sock.sendto(ack_pkt, late_addr)
+                                print(f"[FIN-GRACE] Re-ACK FIN seq {fin_seq}")
+                        except socket.timeout:
+                            continue
+                finally:
+                    sock.settimeout(original_timeout)
 
             return bytes(delivered_buffer), len(delivered_buffer), fin_received
             

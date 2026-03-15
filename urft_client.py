@@ -68,7 +68,7 @@ def start_client(file_path, server_ip, server_port):
                 # Wait for FIN ACK from server
                 if segment.wait_ACK(s, fin_seq, 0):
                     print(f"[FIN-ACK] Received FIN ACK from server")
-                elif segment.retransmit(s, fin_packet, fin_seq, 0, (server_ip, server_port)):
+                elif segment.retransmit(s, fin_packet, fin_seq, 0, (server_ip, server_port), max_retries=3):
                     print(f"[FIN-ACK] Received FIN ACK after retransmit")
                 else:
                     print(f"[WARN] No FIN ACK received after retransmit attempts")
