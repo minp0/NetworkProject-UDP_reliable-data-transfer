@@ -24,56 +24,41 @@ def start_server(ip, port):
     # ต้องเป็น ip ที่ server รอฟัง ไม่ใช่ว่ารอฟังจาก ip ไหน
     try:
 
+        # ใช้ `Realiable` สำหรับการ pack/unpack และฟังก์ชัน ACK/retransmit
+        # คอมเมนต์ภาษาไทย: เราใช้คลาสนี้เพื่อให้โค้ดจัดการฟอร์แมตของแพ็กเก็ตและการส่ง ACK ได้สะดวกขึ้น
         segment = Realiable()
-        file_name, addr_client = segment.standby_connection(s)
+        file_name, addr_client, hs_seq = segment.standby_connection(s)
 
         global start_time
         start_time = time.time()
         print(f"\n[SERVER] Receiving file: {file_name}")
 
-        # Create/overwrite file for receiving data
-        with open(file_name, "wb") as file:
-            bytes_received = 0
-            
-            while True:
-                try:
-                    s.settimeout(socket_timeout)
-                    packet, current_addr = s.recvfrom(BUFFER_SIZE)
-                    
-                    # Only accept packets from the connected client
-                    if current_addr != addr_client:
-                        continue
-                    
-                    # Unpack the packet
-                    message, seq, data_len = segment.unpack(packet)
-                    
-                    # Get flag from packet header
-                    flag = packet[0]
-                    
-                    if flag == 2:  # Data packet
-                        # Extract actual payload (remove null padding)
-                        payload = packet[11:]
-                        file.write(payload)             # เวลา write file ต้อง write เป็น binary
-                        bytes_received += data_len
-                        
-                        # Send ACK
-                        ack_packet = segment.pack_ACK(seq, data_len)
-                        s.sendto(ack_packet, addr_client)
-                        print(f"[ACK] Sent ACK for seq {seq}, total received: {bytes_received} bytes")
-                        
-                    elif flag == 4:  # FIN packet
-                        print(f"\n[FIN] Received FIN packet, file transfer complete!")
-                        print(f"[SUCCESS] File '{file_name}' saved ({bytes_received} bytes)")
-                        break
-                    
-                except socket.timeout:
-                    print("[TIMEOUT] No more data received, closing connection")
-                    break
-                # except Exception as e:
-                #     print(f"[ERROR] {e}")
-                #     break
+        # คำนวณ expected_seq สำหรับการรับ packet ข้อมูลต่อไป
+        expected_seq = hs_seq
+
+        # ใช้ receive_with_dictionary() สำหรับ Selective Repeat
+        print(f"[WINDOW] Starting Selective Repeat with Dictionary tracking")
+        received_data, bytes_received, fin_received = segment.receive_with_dictionary(s, expected_seq)
         
-        print("[READY] Waiting for next connection...\n")
+        if received_data is not None and fin_received:
+            # Create/overwrite file only when transfer is complete
+            with open(file_name, "wb") as file:
+                file.write(received_data)
+            print(f"[SUCCESS] File '{file_name}' saved ({bytes_received} bytes)")
+        else:
+            print(f"[ERROR] Failed to receive complete file")
+            bytes_received = 0
+        
+        # Print statistics and close connection
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        if bytes_received > 0:
+            throughput = (bytes_received * 8) / elapsed_time / 1_000_000  # Mbps
+            print(f"[STATS] Time: {elapsed_time:.2f}s, Throughput: {throughput:.2f} Mbps")
+        
+        print(f"\n[SERVER] File transfer complete. Closing connection...")
+        # Return immediately to exit the function
+        return
 
 
     except KeyboardInterrupt:
@@ -84,14 +69,15 @@ def start_server(ip, port):
         s.close()
 
 
+# start_server("loopback", 10000)
 # main()
 
-import os
-if os.path.exists("Hello Min _Outputfile.bin"):
-    os.remove("Hello Min _Outputfile.bin")
+# import os
+# if os.path.exists("Hello Min _Outputfile.bin"):
+#     os.remove("Hello Min _Outputfile.bin")
 
 start_time = 0
-start_server("loopback", 10000)
-end_time = time.time()
-print(f"Total time : {end_time-start_time:.2f} seconds")
+bytes_received = 0
+# start_server("loopback", 10000)
+main()
 # start_server("192.168.10.116", 10000)   
