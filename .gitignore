@@ -6,6 +6,7 @@
 
 # Except all .py files
 !*.py
+!*.bin
 
 # Re-include directories so Git can search them for .md and .py files
 !*/
