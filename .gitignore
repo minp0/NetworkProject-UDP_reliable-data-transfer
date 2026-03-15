@@ -1,5 +1,6 @@
 # Ignore all files
 *
+*.pyc
 
 # Except all .md files
 !*.md
