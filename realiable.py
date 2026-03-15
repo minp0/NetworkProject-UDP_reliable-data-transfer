@@ -1,13 +1,13 @@
 import struct
 import socket
+import time
 
 # Network sizing: MTU(1500) - IP header(20) - UDP header(8) = 1472 bytes
-BUFFER_SIZE = 1472      # 
+BUFFER_SIZE = 1472
 MSS = 1461              # Payload size per packet -> MSS - 11(header)
-window_size = 32768     # 32 KB (recommended for efficiency)
+WINDOW_SIZE = 20        # Increased from 10 to 20 for better throughput with Selective Repeat
 
-
-socket_timeout = 0.55  # 1 / 1000 * 200 millisecond
+socket_timeout = 0.55   # 0.55 seconds
 
 # !  flag(unsigned char) 1 | seq(unsigned int) 4 | ack | data_len | payload 
 format_segment = f"!BIIH"          #  + f"{MSS}s"
@@ -34,41 +34,44 @@ class Realiable():
         return packet,data_len
 
 
-    def unpack(self, packet) -> tuple[bytes, int, int]:
+    def unpack(self, packet) -> tuple[bytes, int, int, int]:
         """Unpack packet: extract flag, seq, ack, payload"""
         header = packet[:header_size]
         payload = packet[header_size:]
 
         flag, seq, ack, data_len = struct.unpack(format_segment, header)
-        data = struct.unpack(f"{data_len}s", payload)[0]
+        if data_len > 0:
+            data = struct.unpack(f"{data_len}s", payload)[0]
+        else:
+            data = b''
 
         # need total_length of data for ack
         # print(data)
         # message = data.decode("utf-8").strip('\x00')
-        print(f"Received Packet: Seq={seq}, Ack={ack}, Flag={flag}")
+        print(f"Received Packet: Seq={seq}, Ack={ack}, Flag={flag}, DataLen={data_len}")
 
-        return data, seq, data_len
+        return data, seq, data_len, flag
     
 
 
 
     # for ACK
-    def pack_ACK(self, seq, data_len) -> bytes :
-        """pack ACK packet"""
+    def pack_ACK(self, seq) -> bytes :
+        """pack ACK packet for specific sequence number"""
         flag = 1  # ACK flag
-        ack = seq + data_len
-        ack_packet = struct.pack(format_segment, flag, 1, ack, 0)
+        ack = seq  # ACK for this specific seq number
+        ack_packet = struct.pack(format_segment, flag, 0, ack, 0)
         
-        print(f"Send Ack: {ack}")
+        print(f"Send Ack for seq: {ack}")
         return ack_packet
     
     def unpack_ACK(self, ack_packet) -> any :
-        """Unpack ACK packet"""
+        """Unpack ACK packet and return the seq number that was acked"""
         header = ack_packet[:header_size]
         flag, _, ack, _= struct.unpack(format_segment, header)
         if flag != 1:
-            print("This should not happend")
-            return False
+            print("This should not happened - not an ACK packet")
+            return None
         
         print(f"ACK Received for Seq: {ack}")
         return ack
@@ -192,13 +195,242 @@ class Realiable():
         print("Got connection from ->", addr_client)
         
         # Unpack SYN packet
-        file_name, seq, data_len = self.unpack(packet)
-        file_name = file_name.decode("utf-8")
+        file_name, seq, data_len, flag = self.unpack(packet)
+        file_name = file_name.decode("utf-8").strip('\x00')
+        
+        # Expected sequence number for next packet
+        expected_seq = seq + data_len
 
-        # Send ACK
-        ack_handshake = self.pack_ACK(seq, data_len)
+        # Send ACK for handshake (ack for the handshake packet)
+        ack_handshake = self.pack_ACK(expected_seq)
         socket.sendto(ack_handshake, addr_client)
 
-        # คืน seq และ data_len ด้วย เพื่อให้ server รู้ว่า seq ต่อไปควรจะเป็นเท่าไหร่
-        # server จะใช้ seq + data_len มาเป็น expected_seq สำหรับรับแพ็กเก็ตข้อมูลต่อไป
-        return file_name, addr_client, seq, data_len
+        # คืน file_name, addr_client, และ expected_seq
+        # server จะใช้ expected_seq เพื่อเตรียมรับแพ็กเก็ตข้อมูลต่อไป
+        return file_name, addr_client, expected_seq
+    
+    
+    # ====== Selective Repeat Window Methods ======
+    
+    def send_with_window(self, sock, addr, seq_start, payload_list, max_retries=10):
+        """
+        Send data using Selective Repeat with sliding window.
+        
+        Args:
+            sock: UDP socket
+            addr: Destination address (server_addr, server_port)
+            seq_start: Starting sequence number
+            payload_list: List of payload bytes to send
+            max_retries: Maximum retransmit attempts per packet
+        
+        Returns:
+            True if all packets sent and acked successfully, False otherwise
+        """
+        window_size = WINDOW_SIZE
+        seq = seq_start
+        
+        # Track unacked packets with per-packet timer/retry state
+        unacked = {}
+        payload_idx = 0
+        next_seq = seq_start
+        last_data_seq = seq_start
+        ack_poll_interval = 0.05
+        
+        print(f"\\n[CLIENT] Starting Selective Repeat - Window Size: {window_size}")
+        
+        try:
+            sock.settimeout(ack_poll_interval)
+            
+            while payload_idx < len(payload_list) or unacked:
+                
+                # ===== SEND Phase: Fill the window =====
+                while payload_idx < len(payload_list) and len(unacked) < window_size:
+                    flag = 2  # Data flag
+                    payload = payload_list[payload_idx]
+                    ack_num = 0  # No ack needed for data packets
+                    
+                    packet, data_len = self.pack(flag, next_seq, ack_num, payload)
+                    sock.sendto(packet, addr)
+                    
+                    unacked[next_seq] = {
+                        "packet": packet,
+                        "data_len": data_len,
+                        "sent_at": time.monotonic(),
+                        "retries": 0,
+                    }
+                    print(f"[WINDOW] Sent Seq {next_seq} ({len(unacked)} in window)")
+                    
+                    last_data_seq = next_seq
+                    next_seq += data_len
+                    payload_idx += 1
+                
+                # ===== ACK Reception Phase =====
+                try:
+                    ack_packet, _ = sock.recvfrom(BUFFER_SIZE)
+                    acked_seq = self.unpack_ACK(ack_packet)
+                    
+                    if acked_seq and acked_seq in unacked:
+                        del unacked[acked_seq]
+                        print(f"[ACK] Removed seq {acked_seq} from window ({len(unacked)} remaining)")
+                    elif acked_seq:
+                        print(f"[ACK] Received ack for unknown seq {acked_seq}")
+                
+                except socket.timeout:
+                    pass
+
+                # ===== Packet-level retransmission =====
+                now = time.monotonic()
+                for pending_seq, packet_info in list(unacked.items()):
+                    if now - packet_info["sent_at"] < socket_timeout:
+                        continue
+
+                    if packet_info["retries"] >= max_retries:
+                        print(f"[ERROR] Seq {pending_seq} exceeded max retries ({max_retries})")
+                        return False, pending_seq
+
+                    sock.sendto(packet_info["packet"], addr)
+                    packet_info["sent_at"] = now
+                    packet_info["retries"] += 1
+                    print(f"[RETRANSMIT] Resent Seq {pending_seq} (attempt {packet_info['retries']}/{max_retries})")
+                
+            print("[CLIENT] All packets sent and acked successfully!\n")
+            return True, next_seq
+            
+        except Exception as e:
+            print(f"[ERROR] Send with window failed: {e}")
+            return False, seq_start
+    
+    
+    def receive_with_dictionary(self, sock, expected_seq, total_bytes_to_receive=None):
+        """
+        Receive data using Selective Repeat with Dictionary to track received packets.
+        
+        Args:
+            sock: UDP socket
+            expected_seq: Starting expected sequence number
+            total_bytes_to_receive: Total bytes expected (optional, for knowing when to stop)
+        
+        Returns:
+            (received_data, total_packets_received) or (None, 0) if error
+        """
+        # Dictionary to track out-of-order packets: {seq: payload_bytes}
+        received_packets = {}
+
+        current_expected = expected_seq
+        delivered_buffer = bytearray()
+        timeout_count = 0
+        max_timeouts = 10  # Increased from 3 to allow more time for Selective Repeat
+        fin_received = False  # Initialize here to avoid "not associated with a value" error
+        fin_seq = None
+        addr_client = None
+        
+        print(f"\n[SERVER] Starting Selective Repeat Reception from seq {expected_seq}")
+        print(f"[SERVER] Using Dictionary to track received packets\n")
+        
+        try:
+            sock.settimeout(socket_timeout)
+            
+            while timeout_count < max_timeouts:
+                try:
+                    packet, addr_client = sock.recvfrom(BUFFER_SIZE)
+                    data, seq, data_len, flag = self.unpack(packet)
+                    
+                    # Check for FIN packet (flag = 4)
+                    if flag == 4:
+                        print(f"\n[FIN] Received FIN packet from client at seq {seq}")
+                        # Send ACK for FIN back to client
+                        ack_pkt = self.pack_ACK(seq)
+                        sock.sendto(ack_pkt, addr_client)
+                        print(f"[FIN-ACK] Sent FIN ACK back to client")
+                        fin_received = True
+                        fin_seq = seq
+
+                        if current_expected == fin_seq:
+                            print(f"[FIN] All data received before FIN seq {fin_seq}")
+                            break
+
+                        print(f"[FIN] Waiting for missing data before FIN seq {fin_seq}")
+                        timeout_count = 0
+                        continue
+                    
+                    # Handle only DATA packets (flag = 2)
+                    if flag != 2:
+                        continue
+                    
+                    if seq < current_expected or seq in received_packets:
+                        # Duplicate packet - just send ack again
+                        print(f"[DUP] Seq {seq} already received, sending ack again")
+                        ack_pkt = self.pack_ACK(seq)
+                        sock.sendto(ack_pkt, addr_client)
+                        timeout_count = 0  # Reset timeout counter - still receiving from client
+                        continue
+                    
+                    # Store received packet in dictionary
+                    received_packets[seq] = data
+                    
+                    # Send ACK for this specific packet
+                    ack_pkt = self.pack_ACK(seq)
+                    sock.sendto(ack_pkt, addr_client)
+                    print(f"[RECV] Seq {seq} received and ACKed")
+                    
+                    # Check if we can deliver data in order
+                    delivered_data = 0
+                    while current_expected in received_packets:
+                        payload = received_packets.pop(current_expected)
+                        delivered_buffer.extend(payload)
+                        delivered_data += len(payload)
+                        current_expected += len(payload)
+                    
+                    if delivered_data:
+                        print(f"[DELIVERED] Data up to seq {current_expected - 1}")
+
+                    if fin_seq is not None and current_expected == fin_seq:
+                        print(f"[COMPLETE] Missing data filled. Transfer complete up to FIN seq {fin_seq}")
+                        break
+                    
+                    # Show status only if there are gaps (out-of-order packets)
+                    all_seqs = sorted(received_packets.keys())
+                    if len(received_packets) > 1:  # Only show if we have multiple packets
+                        undelivered_count = len(all_seqs)
+                        if undelivered_count > 0:
+                            print(f"[STATUS] Received {len(received_packets)} packets, Delivered up to {current_expected - 1}, Waiting for {undelivered_count} packets")
+                            # Only show first few waiting packets
+                            waiting_seqs = all_seqs[:5]
+                            for seq_key in waiting_seqs:
+                                print(f"  - Seq {seq_key}: Gap detected, waiting for earlier packets")
+                    
+                    timeout_count = 0  # Reset timeout counter on successful receive
+                    
+                except socket.timeout:
+                    if fin_seq is not None and current_expected == fin_seq:
+                        print(f"[COMPLETE] Transfer already complete at FIN seq {fin_seq}")
+                        break
+
+                    timeout_count += 1
+                    if timeout_count < max_timeouts:
+                        print(f"[TIMEOUT] No data received (attempt {timeout_count}/{max_timeouts})")
+                        # Show current status during timeout
+                        if received_packets:
+                            all_seqs = sorted(received_packets.keys())
+                            undelivered_count = len(all_seqs)
+                            print(f"[TIMEOUT-STATUS] Expected next: {current_expected}, Have {len(received_packets)} packets, Waiting for {undelivered_count}")
+                        # Send acks for all received packets
+                        for seq_key in received_packets:
+                            ack_pkt = self.pack_ACK(seq_key)
+                            sock.sendto(ack_pkt, addr_client)
+                    else:
+                        print(f"[TIMEOUT] Max timeouts reached, stopping reception")
+                        break
+                        
+            print(f"[SERVER] Reception complete. Total unique packets received: {len(received_packets)}\n")
+
+            transfer_complete = fin_seq is not None and current_expected == fin_seq
+            if not transfer_complete:
+                print(f"[ERROR] Transfer incomplete. Expected next seq {current_expected}, FIN seq {fin_seq}")
+                return None, len(delivered_buffer), False
+
+            return bytes(delivered_buffer), len(delivered_buffer), fin_received
+            
+        except Exception as e:
+            print(f"[ERROR] Receive with dictionary failed: {e}")
+            return None, 0, False

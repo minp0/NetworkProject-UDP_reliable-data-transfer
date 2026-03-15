@@ -32,61 +32,63 @@ def start_client(file_path, server_ip, server_port):
         if hs_seq == 0:
             print("[ERROR] Handshake failed")
             return
-        # Step 2: Read file and send in chunks
+        # Step 2: Read file and send in chunks using Selective Repeat Window
         if not os.path.exists(file_path):
             print(f"Error: File '{file_path}' not found")
             return
         file_size = os.path.getsize(file_path)
         print(f"\n[FILE INFO] Size: {file_size} bytes, Chunk size: {MSS} bytes")
+        print(f"[WINDOW] Starting Selective Repeat with window size: {WINDOW_SIZE}")
         
         with open(file_path, "rb") as f:
-            # คำนวณ seq ให้เริ่มจากการที่ handshake จบแล้ว
-            # seq ของแพ็กเก็ตข้อมูลจะต้องเป็น seq_handshake + len_handshake คือค่าตัวเลขลำดับต่องาน
-            seq = hs_seq + hs_len  # Start No.2
-            chunks_sent = 0
-            
+            # อ่านไฟล์ทั้งหมดแล้วแบ่งออกเป็น chunks
+            chunks = []
             while True:
                 chunk = f.read(MSS)
-                if not chunk:               # ถ้าหมดแล้วก็ break ซะ
+                if not chunk:
                     break
+                chunks.append(chunk)
+            
+            print(f"[FILE] Total chunks to send: {len(chunks)}")
+            
+            # คำนวณ seq ให้เริ่มจากการที่ handshake จบแล้ว
+            seq_start = hs_seq + hs_len
+            
+            # ส่งข้อมูลโดยใช้ Selective Repeat Window
+            success, fin_seq = segment.send_with_window(s, (server_ip, server_port), seq_start, chunks)
+            if success:
+                print(f"[SUCCESS] All {len(chunks)} chunks sent successfully!")
                 
-                # Send data packet (flag=2)
-                packet, data_len = segment.pack(2, seq, 0, chunk)
-                s.sendto(packet, (server_ip, server_port))
+                # Step 3: Send FIN packet (after all chunks have been acked)
+                print(f"\n[FINISH] Sending FIN packet...")
+                fin_packet, _ = segment.pack(4, fin_seq, 0, b'')
+                s.sendto(fin_packet, (server_ip, server_port))
+                print(f"[FIN] FIN packet sent with seq {fin_seq}")
                 
-                # Wait for ACK
-                if segment.wait_ACK(s, seq, data_len):
-                    chunks_sent += 1
-                    progress = (chunks_sent * MSS / file_size) * 100
-                    print(f"[PROGRESS] Chunk {chunks_sent} sent (Seq={seq}, {progress:.1f}%)")
-                    seq += data_len
+                # Wait for FIN ACK from server
+                if segment.wait_ACK(s, fin_seq, 0):
+                    print(f"[FIN-ACK] Received FIN ACK from server")
+                elif segment.retransmit(s, fin_packet, fin_seq, 0, (server_ip, server_port)):
+                    print(f"[FIN-ACK] Received FIN ACK after retransmit")
                 else:
-                    # attempt retransmit
-                    print(f"[WARN] No ACK for seq {seq}, attempting retransmit")
-                    if segment.retransmit(s, packet, seq, data_len, (server_ip, server_port)):
-                        chunks_sent += 1
-                        progress = (chunks_sent * MSS / file_size) * 100
-                        print(f"[PROGRESS] Chunk {chunks_sent} sent after retransmit (Seq={seq}, {progress:.1f}%)")
-                        seq += data_len
-                    else:
-                        print(f"[ERROR] Failed to receive ACK after retransmit for seq {seq}")
-                        return
-        
-        # Step 3: Send FIN packet
-        print(f"\n[FINISH] Sending FIN packet...")
-        fin_packet, _ = segment.pack(4, seq, 0, b'')
-        s.sendto(fin_packet, (server_ip, server_port))
-        
-        print(f"[SUCCESS] File sent! Total chunks: {chunks_sent}")
+                    print(f"[WARN] No FIN ACK received after retransmit attempts")
+            else:
+                print(f"[ERROR] Failed to send file using Selective Repeat")
+                s.close()
+                return
         
     except Exception as e:
         print(f"[ERROR] {e}")
     finally:
-        s.close()
+        try:
+            s.close()
+            print(f"[CLIENT] Socket closed")
+        except:
+            pass
 
 
 main()
 # start_client("something","loopback", 10000)
 # start_client("something","25.12.207.234", 10000)
 # Test with test_1MiB.bin
-# start_client("test_5MiB.bin", "loopback", 10000)
+# start_client("../test_5MiB.bin", "192.168.10.116", 10000)
